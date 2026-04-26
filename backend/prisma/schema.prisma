@@ -1,0 +1,82 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider  = "postgresql"
+  url       = env("DATABASE_URL")
+  directUrl = env("DIRECT_URL")
+}
+
+model User {
+  id               Int      @id @default(autoincrement())
+  telegramId       String   @unique
+  telegramUsername String?
+  name             String
+  xProfileUrl      String
+  points           Int      @default(0)
+  isApproved       Boolean  @default(false)
+  isAdmin          Boolean  @default(false)
+  createdAt        DateTime @default(now())
+
+  tasksCreated  Task[]           @relation("TaskCreator")
+  completions   TaskCompletion[]
+}
+
+model AccessRequest {
+  id               Int           @id @default(autoincrement())
+  telegramId       String        @unique
+  telegramUsername String?
+  name             String
+  xProfileUrl      String
+  status           RequestStatus @default(PENDING)
+  createdAt        DateTime      @default(now())
+}
+
+enum RequestStatus {
+  PENDING
+  APPROVED
+  REJECTED
+}
+
+model Task {
+  id          Int      @id @default(autoincrement())
+  creatorId   Int
+  creator     User     @relation("TaskCreator", fields: [creatorId], references: [id])
+  type        TaskType
+  targetUrl   String
+  description String?
+  pointCost   Int
+  maxSlots    Int
+  usedSlots   Int      @default(0)
+  isActive    Boolean  @default(true)
+  isApproved  Boolean  @default(false)
+  createdAt   DateTime @default(now())
+
+  completions TaskCompletion[]
+}
+
+enum TaskType {
+  FOLLOW
+  LIKE
+  COMMENT
+}
+
+model TaskCompletion {
+  id        Int              @id @default(autoincrement())
+  taskId    Int
+  task      Task             @relation(fields: [taskId], references: [id])
+  userId    Int
+  user      User             @relation(fields: [userId], references: [id])
+  status    CompletionStatus @default(PENDING)
+  createdAt DateTime         @default(now())
+  updatedAt DateTime         @updatedAt
+
+  @@unique([taskId, userId])
+}
+
+enum CompletionStatus {
+  PENDING
+  APPROVED
+  REJECTED
+}
