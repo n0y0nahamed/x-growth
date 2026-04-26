@@ -40,6 +40,25 @@ function Toast({ msg, type }) {
   );
 }
 
+// ── X APP DEEP LINK ───────────────────────────────────────────────────────────
+function openXApp(url) {
+  const statusMatch  = url.match(/(?:twitter|x)\.com\/[^/]+\/status\/(\d+)/);
+  const profileMatch = url.match(/(?:twitter|x)\.com\/([A-Za-z0-9_]+)\/?(?:\?.*)?$/);
+  const reserved     = ["home","search","notifications","messages","i","explore","hashtag","settings"];
+
+  if (statusMatch) {
+    const id = statusMatch[1];
+    window.location.href = `twitter://status?id=${id}`;
+    setTimeout(() => window.open(url, "_blank"), 1500);
+  } else if (profileMatch && !reserved.includes(profileMatch[1].toLowerCase())) {
+    const handle = profileMatch[1];
+    window.location.href = `twitter://user?screen_name=${handle}`;
+    setTimeout(() => window.open(url, "_blank"), 1500);
+  } else {
+    window.open(url, "_blank");
+  }
+}
+
 // ── AUTH ──────────────────────────────────────────────────────────────────────
 function AuthPage({ tgUser, onApproved }) {
   const [name,      setName]      = useState(`${tgUser?.first_name || ""} ${tgUser?.last_name || ""}`.trim());
@@ -223,9 +242,17 @@ function AddTaskModal({ user, onClose, onCreated }) {
   const [error,   setError]   = useState("");
   const [done,    setDone]    = useState(false);
 
+  const maxSlots = Math.max(1, Math.min(50, user?.points ?? 0));
+  const noPoints = (user?.points ?? 0) === 0;
+
   async function handleCreate() {
     if (!url.trim()) { setError("Enter a URL"); return; }
-    if ((user?.points ?? 0) < slots) { setError(`Not enough points. Need ${slots}, you have ${user?.points ?? 0}`); return; }
+    if (!url.includes("x.com") && !url.includes("twitter.com")) {
+      setError("Enter a valid X / Twitter URL"); return;
+    }
+    if ((user?.points ?? 0) < slots) {
+      setError(`Not enough points. Need ${slots}, you have ${user?.points ?? 0}`); return;
+    }
     setError(""); setLoading(true);
     try {
       await api.post("/api/tasks", { type, targetUrl: url.trim(), description: desc.trim(), maxSlots: slots });
@@ -289,13 +316,26 @@ function AddTaskModal({ user, onClose, onCreated }) {
             <p className="form-label" style={{ margin:0 }}>Slots: {slots}</p>
             <p style={{ color:"#1d9bf0", fontSize:13, margin:0, fontWeight:700 }}>Cost: {slots} pts</p>
           </div>
-          <input type="range" min={1} max={Math.min(50, user?.points ?? 50)} value={slots}
-            onChange={e => setSlots(Number(e.target.value))} style={{ width:"100%", accentColor:"#1d9bf0" }} />
+          <input
+            type="range" min={1} max={maxSlots} value={Math.min(slots, maxSlots)}
+            onChange={e => setSlots(Number(e.target.value))}
+            disabled={noPoints}
+            style={{ width:"100%", accentColor:"#1d9bf0", opacity: noPoints ? 0.4 : 1 }}
+          />
+          {noPoints && (
+            <p className="form-error" style={{ marginTop:6 }}>
+              ⚠️ You have 0 points. Complete tasks first to earn points.
+            </p>
+          )}
         </div>
 
         {error && <p className="form-error">{error}</p>}
 
-        <button className="btn-primary" onClick={handleCreate} disabled={loading || !url} style={{ opacity: !url ? 0.5 : 1 }}>
+        <button
+          className="btn-primary"
+          onClick={handleCreate}
+          disabled={loading || !url || noPoints}
+          style={{ opacity: (!url || noPoints) ? 0.5 : 1 }}>
           {loading ? "Creating..." : `Create Task (−${slots} pts)`}
         </button>
       </div>
@@ -309,6 +349,7 @@ function TaskPage({ user, onUserUpdate }) {
   const [tasks,     setTasks]     = useState([]);
   const [loading,   setLoading]   = useState(true);
   const [showModal, setShowModal] = useState(false);
+  const [opened,    setOpened]    = useState({});
   const [submitted, setSubmitted] = useState({});
   const [toast,     setToast]     = useState(null);
 
@@ -321,9 +362,15 @@ function TaskPage({ user, onUserUpdate }) {
     setLoading(true);
     try {
       const { data } = await api.get(tab === "mine" ? "/api/tasks/mine" : "/api/tasks");
-      setTasks(data);
-    } catch { showToast("Failed to load tasks", "error"); }
-    finally { setLoading(false); }
+      const filtered = tab === "available"
+        ? data.filter(t => t.usedSlots < t.maxSlots)
+        : data;
+      setTasks(filtered);
+    } catch {
+      showToast("Failed to load tasks", "error");
+    } finally {
+      setLoading(false);
+    }
   }, [tab]);
 
   useEffect(() => { fetchTasks(); }, [fetchTasks]);
@@ -332,11 +379,20 @@ function TaskPage({ user, onUserUpdate }) {
     try {
       await api.post(`/api/tasks/${taskId}/complete`);
       setSubmitted(prev => ({ ...prev, [taskId]: true }));
-      showToast("Completion request sent to task creator!");
+      showToast("Completion request sent!");
+      setTimeout(() => {
+        setTasks(prev => prev.filter(t => t.id !== taskId));
+      }, 1200);
     } catch (e) {
       showToast(e.response?.data?.error || "Error", "error");
     }
   }
+
+  const ACTION_LABEL = {
+    FOLLOW:  "Follow on X 👤",
+    LIKE:    "Like on X ❤️",
+    COMMENT: "Comment on X 💬",
+  };
 
   return (
     <div style={{ display:"flex", flexDirection:"column", minHeight:"100%" }}>
@@ -362,15 +418,18 @@ function TaskPage({ user, onUserUpdate }) {
             <p>{tab === "available" ? "No tasks available right now" : "You haven't created any tasks"}</p>
           </div>
         ) : tasks.map((task, i) => {
-          const c   = TYPE_CFG[task.type];
-          const pct = Math.round((task.usedSlots / task.maxSlots) * 100);
-          const done = submitted[task.id];
+          const c          = TYPE_CFG[task.type];
+          const pct        = Math.round((task.usedSlots / task.maxSlots) * 100);
+          const hasOpened  = opened[task.id];
+          const isDone     = submitted[task.id];
+
           return (
             <div key={task.id} className="card fade-up" style={{ animationDelay:`${i * 0.04}s` }}>
+
               {task.creator && (
                 <div style={{ display:"flex", alignItems:"center", gap:6, marginBottom:10 }}>
                   <div className="creator-avatar">{task.creator.name?.[0]?.toUpperCase()}</div>
-                  <span style={{ color:"#6b7280", fontSize:12 }}>{task.creator.name}</span>
+                  <span style={{ color:"#9ca3af", fontSize:12, fontWeight:600 }}>{task.creator.name}</span>
                   {tab === "mine" && (
                     <span className={`status-pill ${task.isApproved ? "pill-green" : "pill-yellow"}`}>
                       {task.isApproved ? "✅ Live" : "⏳ Pending"}
@@ -387,12 +446,11 @@ function TaskPage({ user, onUserUpdate }) {
                   {task.description && (
                     <p style={{ color:"#e5e7eb", fontSize:13, margin:"8px 0 0", lineHeight:1.4 }}>{task.description}</p>
                   )}
-                  <p style={{ color:"#374151", fontSize:11, margin:"4px 0 0", wordBreak:"break-all" }}>{task.targetUrl}</p>
                 </div>
-                <span style={{ color:"#1d9bf0", fontWeight:800, fontSize:16, marginLeft:10 }}>+1</span>
+                <span style={{ color:"#1d9bf0", fontWeight:800, fontSize:16, marginLeft:10 }}>+1pt</span>
               </div>
 
-              <div style={{ marginBottom: tab === "available" ? 12 : 0 }}>
+              <div style={{ marginBottom:12 }}>
                 <div style={{ display:"flex", justifyContent:"space-between", marginBottom:4 }}>
                   <span style={{ color:"#6b7280", fontSize:11 }}>{task.usedSlots}/{task.maxSlots} slots</span>
                   <span style={{ color: pct > 80 ? "#ef4444" : "#6b7280", fontSize:11, fontWeight:600 }}>{pct}%</span>
@@ -403,12 +461,32 @@ function TaskPage({ user, onUserUpdate }) {
               </div>
 
               {tab === "available" && (
-                done ? (
+                isDone ? (
                   <div className="complete-sent">✅ Completion request sent</div>
                 ) : (
-                  <button className="btn-complete" onClick={() => handleComplete(task.id)}>
-                    Mark as Complete
-                  </button>
+                  <div style={{ display:"flex", flexDirection:"column", gap:8 }}>
+                    <button
+                      className="btn-primary"
+                      style={{
+                        background: hasOpened ? "rgba(29,155,240,0.15)" : undefined,
+                        border:     hasOpened ? "1px solid rgba(29,155,240,0.4)" : undefined,
+                        color:      hasOpened ? "#1d9bf0" : undefined,
+                      }}
+                      onClick={() => {
+                        openXApp(task.targetUrl);
+                        setOpened(prev => ({ ...prev, [task.id]: true }));
+                      }}>
+                      {hasOpened ? "↩ Reopen X" : (ACTION_LABEL[task.type] || "Open on X")}
+                    </button>
+
+                    {hasOpened && (
+                      <button
+                        className="btn-complete"
+                        onClick={() => handleComplete(task.id)}>
+                        ✅ Mark as Complete
+                      </button>
+                    )}
+                  </div>
                 )
               )}
             </div>
@@ -676,4 +754,4 @@ export default function App() {
       <BottomNav active={activeTab} onChange={setActiveTab} />
     </div>
   );
-}
+  }
