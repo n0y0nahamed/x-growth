@@ -40,23 +40,9 @@ function Toast({ msg, type }) {
   );
 }
 
-// ── X APP DEEP LINK ───────────────────────────────────────────────────────────
+// ── X APP OPEN ────────────────────────────────────────────────────────────────
 function openXApp(url) {
-  const statusMatch  = url.match(/(?:twitter|x)\.com\/[^/]+\/status\/(\d+)/);
-  const profileMatch = url.match(/(?:twitter|x)\.com\/([A-Za-z0-9_]+)\/?(?:\?.*)?$/);
-  const reserved     = ["home","search","notifications","messages","i","explore","hashtag","settings"];
-
-  if (statusMatch) {
-    const id = statusMatch[1];
-    window.location.href = `twitter://status?id=${id}`;
-    setTimeout(() => window.open(url, "_blank"), 1500);
-  } else if (profileMatch && !reserved.includes(profileMatch[1].toLowerCase())) {
-    const handle = profileMatch[1];
-    window.location.href = `twitter://user?screen_name=${handle}`;
-    setTimeout(() => window.open(url, "_blank"), 1500);
-  } else {
-    window.open(url, "_blank");
-  }
+  window.Telegram?.WebApp?.openLink(url);
 }
 
 // ── AUTH ──────────────────────────────────────────────────────────────────────
@@ -182,9 +168,12 @@ function HomePage({ user }) {
         <div style={{ flex:1, minWidth:0 }}>
           <span className="user-name">{user.name}</span>
           {user.xProfileUrl && (
-            <a href={user.xProfileUrl} target="_blank" rel="noreferrer" className="x-link">
+            <span
+              className="x-link"
+              onClick={() => openXApp(user.xProfileUrl)}
+            >
               View X Profile →
-            </a>
+            </span>
           )}
         </div>
       </div>
@@ -418,14 +407,13 @@ function TaskPage({ user, onUserUpdate }) {
             <p>{tab === "available" ? "No tasks available right now" : "You haven't created any tasks"}</p>
           </div>
         ) : tasks.map((task, i) => {
-          const c          = TYPE_CFG[task.type];
-          const pct        = Math.round((task.usedSlots / task.maxSlots) * 100);
-          const hasOpened  = opened[task.id];
-          const isDone     = submitted[task.id];
+          const c         = TYPE_CFG[task.type];
+          const pct       = Math.round((task.usedSlots / task.maxSlots) * 100);
+          const hasOpened = opened[task.id];
+          const isDone    = submitted[task.id];
 
           return (
             <div key={task.id} className="card fade-up" style={{ animationDelay:`${i * 0.04}s` }}>
-
               {task.creator && (
                 <div style={{ display:"flex", alignItems:"center", gap:6, marginBottom:10 }}>
                   <div className="creator-avatar">{task.creator.name?.[0]?.toUpperCase()}</div>
@@ -754,4 +742,4 @@ export default function App() {
       <BottomNav active={activeTab} onChange={setActiveTab} />
     </div>
   );
-  }
+    }
